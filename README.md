@@ -56,7 +56,7 @@ kpackagetool6 --type Plasma/Applet --remove org.qianshi.win10start
 | 显示“最近使用” | 左栏顶部最近使用列表 | 开 |
 | 始终显示左侧文件夹栏 | 关闭后 ≡ 可收起 | 开 |
 | 磁贴大小 | 磁贴单位尺寸（36–64） | 48 |
-| 弹窗高度 | 弹窗像素高度（宽度固定 690） | 640 |
+| 弹窗高度 | 弹窗像素高度（宽度固定 690） | 860 |
 | 选中分组 | 记住上次操作的分组 | 0 |
 
 配置存储：`~/.config/plasma-org.kde.plasma.desktop-appletsrc` 中本组件的 `[Configuration]` 段；

@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Window
 import QtQuick.Controls as QQC2
 
 import org.kde.plasma.plasmoid
@@ -23,7 +24,14 @@ Item {
 
     // 宽度固定：磁贴列、分界线不动；侧栏展开时应用列表变窄，收起时应用列表吃掉侧栏的宽度
     readonly property int railWidth: Math.round(u * 3.9)
-    readonly property int tilesWidth: Math.round(u * 19.33)
+    property int tileColumns: 1
+    property int lastTileColumns: 1
+    property bool previewingColumn: false
+    onPreviewingColumnChanged: Qt.callLater(syncPopupSize)
+    readonly property var popupWindow: Window.window
+    readonly property int columnStep: Math.round(u * 19.3)
+    readonly property int baseTilesWidth: Math.round(u * 19.33)
+    readonly property int tilesWidth: baseTilesWidth + Math.max(0, tileColumns - 1 + (previewingColumn ? 1 : 0)) * columnStep
     readonly property int appWidthExpanded: Math.round(u * 15)
     readonly property int appWidthCollapsed: appWidthExpanded + railWidth + 1
     readonly property int contentWidth: appWidthExpanded + railWidth + 1 + 1 + tilesWidth
@@ -35,14 +43,29 @@ Item {
     implicitHeight: popupHeight
     Layout.minimumWidth: implicitWidth
     Layout.minimumHeight: implicitHeight
+    Layout.maximumWidth: implicitWidth
     Layout.preferredWidth: implicitWidth
     Layout.preferredHeight: implicitHeight
 
     Component.onCompleted: {
+        Qt.callLater(function() {
+            if (tileArea) {
+                tileColumns = tileArea.columnCount
+                lastTileColumns = tileColumns
+            }
+        })
         rootModel.appletInterface = root.applet
         runnerSource.appletInterface = root.applet
         placesSource.appletInterface = root.applet
         rootModel.refresh()
+    }
+
+    function syncPopupSize() {
+        const w = root.popupWindow
+        if (!w || !root.applet || !root.applet.expanded) {
+            return
+        }
+        w.width = root.contentWidth
     }
 
     function drillInto(index, label) {
@@ -50,6 +73,31 @@ Item {
         if (m) {
             root.drilledModel = m
             root.drilledName = label
+        }
+    }
+
+    Connections {
+        target: tileArea
+        function onPreviewChanged(preview) {
+            root.previewingColumn = preview
+        }
+    }
+
+    Connections {
+        target: tileArea
+        function onColumnLayoutChanged(count) {
+            root.tileColumns = count
+            root.lastTileColumns = count
+            Qt.callLater(root.syncPopupSize)
+        }
+    }
+
+    Connections {
+        target: root.applet
+        function onExpandedChanged() {
+            if (root.applet && !root.applet.expanded && tileArea) {
+                tileArea.cancelDrag()
+            }
         }
     }
 

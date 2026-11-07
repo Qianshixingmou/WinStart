@@ -16,6 +16,7 @@ Rectangle {
     signal dragStarted()
     signal dragMoved(real sceneX, real sceneY)
     signal dragEnded(real sceneX, real sceneY)
+    signal dragCanceled()
 
     readonly property string size: tileData && tileData.size ? tileData.size : "medium"
     readonly property int gridW: size === "small" ? 1 : (size === "wide" || size === "large") ? 4 : 2
@@ -65,6 +66,8 @@ Rectangle {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         cursorShape: Qt.PointingHandCursor
+        // 拖动磁贴时不要让外层 Flickable 抢走鼠标
+        preventStealing: true
 
         property point pressPoint
         property bool suppressClick: false
@@ -100,7 +103,12 @@ Rectangle {
             }
         }
 
-        onCanceled: tile.dragging = false
+        onCanceled: {
+            if (tile.dragging) {
+                tile.dragging = false
+                tile.dragCanceled()
+            }
+        }
 
         onClicked: mouse => {
             if (suppressClick) {

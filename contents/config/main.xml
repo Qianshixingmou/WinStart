@@ -12,7 +12,7 @@
             <default>720</default>
         </entry>
         <entry name="popupHeight" type="Int">
-            <default>640</default>
+            <default>860</default>
         </entry>
         <!-- 0 = 字母排序, 1 = 自定义分类 -->
         <entry name="listMode" type="Int">

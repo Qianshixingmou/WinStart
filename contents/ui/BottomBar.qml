@@ -3,6 +3,7 @@ import QtQuick.Layouts
 
 import org.kde.plasma.plasmoid
 import org.kde.plasma.components as PlasmaComponents3
+import org.kde.plasma.extras as PlasmaExtras
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.components as KirigamiComponents
 import org.kde.kcmutils as KCM
@@ -63,31 +64,32 @@ RowLayout {
         icon.name: "system-shutdown"
         display: PlasmaComponents3.AbstractButton.IconOnly
         Layout.rightMargin: Kirigami.Units.smallSpacing
-        onClicked: {
-            const p = powerButton.mapToItem(null, 0, 0)
-            powerMenu.x = Math.max(0, p.x + powerButton.width - powerMenu.implicitWidth)
-            powerMenu.y = Math.max(0, p.y - powerMenu.implicitHeight)
-            powerMenu.open()
-        }
+        onClicked: powerMenu.openRelative()
         PlasmaComponents3.ToolTip.text: i18n("电源")
         PlasmaComponents3.ToolTip.visible: hovered
         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
     }
 
-    PlasmaComponents3.Menu {
+    // 用 KDE 自己的 PlasmaExtras.Menu：相对按钮向上弹，自动避开按钮和窗口边缘
+    PlasmaExtras.Menu {
         id: powerMenu
+        visualParent: powerButton
+        placement: PlasmaExtras.Menu.TopPosedRightAlignedPopup
+    }
 
-        Repeater {
-            model: bar.systemModel
+    Instantiator {
+        model: bar.systemModel
 
-            PlasmaComponents3.MenuItem {
-                text: model.display
-                icon.name: model.decoration
-                onTriggered: {
-                    bar.systemModel.trigger(index, "", null)
-                    bar.closeRequested()
-                }
+        delegate: PlasmaExtras.MenuItem {
+            text: model.display
+            icon: model.decoration
+            onClicked: {
+                bar.systemModel.trigger(index, "", null)
+                bar.closeRequested()
             }
         }
+
+        onObjectAdded: (index, object) => powerMenu.addMenuItem(object)
+        onObjectRemoved: (index, object) => powerMenu.removeMenuItem(object)
     }
 }

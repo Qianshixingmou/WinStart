@@ -14,32 +14,62 @@ Item {
     property var favoritesModel: null
 
     signal closeRequested()
+    signal columnLayoutChanged(int count)
+    signal previewChanged(bool preview)
 
     readonly property int unit: Math.max(36, Math.min(64, Plasmoid.configuration.tileUnit > 0 ? Plasmoid.configuration.tileUnit : 48))
     readonly property int columns: 6
     readonly property int gap: 6
+    readonly property int columnGap: Math.round(area.unit * 0.6)
+    // 槽位按“一个正常磁贴（2×2）”的大小步进，不要太碎
+    readonly property int slotStep: area.unit * 2 + area.gap
+    readonly property int columnWidth: area.columns * area.unit + (area.columns - 1) * area.gap
 
+    // 每个 group: { name, column, tiles }
     property var groups: []
     property int totalTiles: 0
+
+    property bool previewColumn: false
+    onPreviewColumnChanged: previewChanged(previewColumn)
+
+    readonly property int realColumnCount: {
+        let c = 1
+        for (const g of area.groups) {
+            c = Math.max(c, (g.column ?? 0) + 1)
+        }
+        return c
+    }
+    readonly property int columnCount: realColumnCount
+
+    onColumnCountChanged: columnLayoutChanged(columnCount)
+
+    // 用于拖动时取几何信息
+    property var groupItems: ({})
+    property var columnItems: ({})
 
     property var dragInfo: null
     property point dragPos: Qt.point(0, 0)
     property bool externalDrag: false
     property int selectedGroup: 0
 
+    property int groupDragIndex: -1
+    property real frozenRowX: 0
+    property string groupDragName: ""
+    property point groupDragPos: Qt.point(0, 0)
+    property real groupDragHeight: 80
+
+    property int dropColumn: -1
+    property int dropIndex: -1
+    property int alignGroupIndex: -1
+    property real alignTargetY: 0
+    property int alignTries: 0
+    property real dropX: 0
+    property real dropY: 0
+
     Component.onCompleted: {
         load()
         const saved = Plasmoid.configuration.selectedGroup
         selectGroup(Number.isFinite(saved) ? saved : 0)
-    }
-
-    function selectGroup(index) {
-        if (groups.length === 0) {
-            return
-        }
-        const gi = Math.max(0, Math.min(index, groups.length - 1))
-        selectedGroup = gi
-        Plasmoid.configuration.selectedGroup = gi
     }
 
     function load() {
@@ -52,8 +82,14 @@ Item {
         if (data && Array.isArray(data.groups) && data.groups.length > 0) {
             groups = data.groups
         } else {
-            groups = [{ name: i18n("常用"), tiles: [] }]
+            groups = [{ name: i18n("常用"), column: 0, tiles: [] }]
         }
+        for (const g of groups) {
+            if (!Number.isFinite(g.column)) {
+                g.column = 0
+            }
+        }
+        normalizeColumns()
         recount()
     }
 
@@ -61,7 +97,32 @@ Item {
         Plasmoid.configuration.tileLayout = JSON.stringify({ groups: groups })
     }
 
+    function compactColumns() {
+        let maxCol = 0
+        for (const g of groups) {
+            maxCol = Math.max(maxCol, g.column ?? 0)
+        }
+        const cols = []
+        for (let c = 0; c <= maxCol; ++c) {
+            cols.push([])
+        }
+        for (const g of groups) {
+            const c = Math.max(0, Math.min(g.column ?? 0, maxCol))
+            cols[c].push(g)
+        }
+        const nonEmpty = cols.filter(list => list.length > 0)
+        const flat = []
+        for (let c = 0; c < nonEmpty.length; ++c) {
+            for (const g of nonEmpty[c]) {
+                g.column = c
+                flat.push(g)
+            }
+        }
+        groups = flat
+    }
+
     function touch() {
+        compactColumns()
         groups = JSON.parse(JSON.stringify(groups))
         recount()
         save()
@@ -73,6 +134,67 @@ Item {
             n += g.tiles.length
         }
         totalTiles = n
+    }
+
+    function normalizeColumns() {
+        const cols = []
+        for (let c = 0; c < area.columnCount; ++c) {
+            cols.push([])
+        }
+        for (const g of groups) {
+            const c = Math.max(0, Math.min(g.column ?? 0, cols.length - 1))
+            cols[c].push(g)
+        }
+        const nonEmpty = cols.filter(list => list.length > 0)
+        const flat = []
+        for (let c = 0; c < nonEmpty.length; ++c) {
+            for (const g of nonEmpty[c]) {
+                g.column = c
+                flat.push(g)
+            }
+        }
+        groups = flat
+    }
+
+    function columnsData() {
+        const cols = []
+        for (let c = 0; c < area.columnCount; ++c) {
+            cols.push([])
+        }
+        for (const g of groups) {
+            const c = Math.max(0, Math.min(g.column ?? 0, cols.length - 1))
+            cols[c].push(g)
+        }
+        return cols
+    }
+
+    function rawGroupsForColumn(c) {
+        const out = []
+        for (let i = 0; i < groups.length; ++i) {
+            if ((groups[i].column ?? 0) === c) {
+                out.push({ gi: i, g: groups[i] })
+            }
+        }
+        return out
+    }
+
+    function groupsForColumn(c) {
+        const out = []
+        for (let i = 0; i < groups.length; ++i) {
+            if ((groups[i].column ?? 0) === c) {
+                out.push({ gi: i, g: groups[i] })
+            }
+        }
+        return out
+    }
+
+    function selectGroup(index) {
+        if (groups.length === 0) {
+            return
+        }
+        const gi = Math.max(0, Math.min(index, groups.length - 1))
+        selectedGroup = gi
+        Plasmoid.configuration.selectedGroup = gi
     }
 
     function hasTile(type, key) {
@@ -95,7 +217,7 @@ Item {
             return
         }
         if (groups.length === 0) {
-            groups = [{ name: i18n("常用"), tiles: [] }]
+            groups = [{ name: i18n("常用"), column: 0, tiles: [] }]
         }
         const gi = Math.max(0, Math.min(groupIndex, groups.length - 1))
         groups[gi].tiles.push({
@@ -117,7 +239,7 @@ Item {
             return
         }
         if (groups.length === 0) {
-            groups = [{ name: i18n("常用"), tiles: [] }]
+            groups = [{ name: i18n("常用"), column: 0, tiles: [] }]
         }
         const gi = Math.max(0, Math.min(area.selectedGroup, groups.length - 1))
         groups[gi].tiles.push({
@@ -171,7 +293,13 @@ Item {
     }
 
     function addGroup(name) {
-        groups.push({ name: name, tiles: [] })
+        const cols = area.columnsData()
+        let lastCol = cols.length - 1
+        const sel = area.groups[area.selectedGroup]
+        if (sel) {
+            lastCol = sel.column ?? 0
+        }
+        groups.push({ name: name, column: Math.max(0, lastCol), tiles: [] })
         touch()
     }
 
@@ -185,17 +313,64 @@ Item {
             return
         }
         groups.splice(index, 1)
+        normalizeColumns()
         touch()
+    }
+
+    function spanFor(size, axis) {
+        if (size === "small") {
+            return 1
+        }
+        if (size === "wide") {
+            return axis === "w" ? 4 : 2
+        }
+        if (size === "large") {
+            return 4
+        }
+        return 2
+    }
+
+    function gridSize(size, axis) {
+        const n = spanFor(size, axis)
+        return n * area.unit + (n - 1) * area.gap
+    }
+
+    function groupItem(gi) {
+        return area.groupItems[gi] ?? null
+    }
+
+    function groupAt(sceneX, sceneY, allowNearest) {
+        let best = -1
+        let bestDist = 1e9
+        for (let gi = 0; gi < area.groups.length; ++gi) {
+            const item = groupItem(gi)
+            if (!item) {
+                continue
+            }
+            const p = item.mapFromItem(null, sceneX, sceneY)
+            if (p.x >= 0 && p.x <= item.width && p.y >= 0 && p.y <= item.height) {
+                return gi
+            }
+            if (!allowNearest) {
+                continue
+            }
+            const dx = p.x < 0 ? -p.x : (p.x > item.width ? p.x - item.width : 0)
+            const dy = p.y < 0 ? -p.y : (p.y > item.height ? p.y - item.height : 0)
+            const d = Math.hypot(dx, dy)
+            if (d < bestDist) {
+                bestDist = d
+                best = gi
+            }
+        }
+        return best
     }
 
     function startDrag(groupIndex, tileIndex, tileData) {
         dragInfo = { group: groupIndex, index: tileIndex, tile: tileData }
-        const col = groupRepeater.itemAt(groupIndex)
-        if (col) {
-            const item = col.tilesRepeater.itemAt(tileIndex)
-            if (item) {
-                dragPos = item.mapToItem(area, item.width / 2, item.height / 2)
-            }
+        const item = groupItem(groupIndex)
+        if (item && item.tilesRepeater.itemAt(tileIndex)) {
+            const t = item.tilesRepeater.itemAt(tileIndex)
+            dragPos = t.mapToItem(area, t.width / 2, t.height / 2)
         }
     }
 
@@ -223,28 +398,14 @@ Item {
         if (!info || p.x < 0 || p.x > area.width || p.y < 0 || p.y > area.height) {
             return
         }
-
-        // 落在哪个分组就加到哪个分组；落在空白处则加到当前选中的分组
-        let target = area.selectedGroup
-        for (let gi = 0; gi < area.groups.length; ++gi) {
-            const col = groupRepeater.itemAt(gi)
-            if (!col) {
-                continue
-            }
-            const q = col.mapFromItem(null, sceneX, sceneY)
-            if (q.x >= 0 && q.x <= col.width && q.y >= 0 && q.y <= col.height) {
-                target = gi
-                break
-            }
-        }
+        const hit = groupAt(sceneX, sceneY, false)
+        const target = hit >= 0 ? hit : area.selectedGroup
         area.pinAppTo(target, info.tile.favoriteId, info.tile.label, info.tile.icon)
     }
 
     function cancelExternalDrag() {
-        if (externalDrag) {
-            externalDrag = false
-            dragInfo = null
-        }
+        externalDrag = false
+        dragInfo = null
     }
 
     function updateDrag(sceneX, sceneY) {
@@ -261,27 +422,31 @@ Item {
         const info = dragInfo
         dragInfo = null
 
-        for (let gi = 0; gi < area.groups.length; ++gi) {
-            const col = groupRepeater.itemAt(gi)
-            if (!col) {
-                continue
-            }
-            const grid = col.grid
-            const p = grid.mapFromItem(null, sceneX, sceneY)
-            if (p.x < 0 || p.x > grid.width || p.y < 0 || p.y > grid.height) {
-                continue
-            }
-            let target = col.tilesRepeater.count
-            for (let ti = 0; ti < col.tilesRepeater.count; ++ti) {
-                const item = col.tilesRepeater.itemAt(ti)
-                if (p.x >= item.x && p.x <= item.x + item.width && p.y >= item.y && p.y <= item.y + item.height) {
-                    target = p.x > item.x + item.width / 2 ? ti + 1 : ti
-                    break
-                }
-            }
-            area.moveTile(info.group, info.index, gi, target)
+        const gi = groupAt(sceneX, sceneY, true)
+        if (gi < 0) {
             return
         }
+        const item = groupItem(gi)
+        let target = item ? item.tilesRepeater.count : 0
+        if (item) {
+            const grid = item.grid
+            const p = grid.mapFromItem(null, sceneX, sceneY)
+            if (p.x >= 0 && p.x <= grid.width && p.y >= 0 && p.y <= grid.height) {
+                for (let ti = 0; ti < item.tilesRepeater.count; ++ti) {
+                    const t = item.tilesRepeater.itemAt(ti)
+                    if (p.x >= t.x && p.x <= t.x + t.width && p.y >= t.y && p.y <= t.y + t.height) {
+                        target = p.x > t.x + t.width / 2 ? ti + 1 : ti
+                        break
+                    }
+                }
+            }
+        }
+        area.moveTile(info.group, info.index, gi, target)
+    }
+
+    function cancelDrag() {
+        dragInfo = null
+        externalDrag = false
     }
 
     function moveTile(fromGroup, fromIndex, toGroup, toIndex) {
@@ -297,22 +462,204 @@ Item {
         area.touch()
     }
 
-    function spanFor(size, axis) {
-        if (size === "small") {
-            return 1
+    // 落位后测量实际位置，与悬浮槽位对齐；有偏差就补一次上边距
+    function alignDroppedGroup() {
+        if (area.alignGroupIndex < 0 || area.alignTries >= 3) {
+            return
         }
-        if (size === "wide") {
-            return axis === "w" ? 4 : 2
+        const item = area.groupItem(area.alignGroupIndex)
+        const g = area.groups[area.alignGroupIndex]
+        if (!item || !g) {
+            return
         }
-        if (size === "large") {
-            return 4
+        const actualY = item.mapToItem(area, 0, 0).y
+        const delta = Math.round(area.alignTargetY - actualY)
+        if (Math.abs(delta) >= 1) {
+            g.gapBefore = Math.max(0, Math.round((g.gapBefore ?? 0) + delta))
+            area.alignTries += 1
+            area.touch()
+            alignTimer.restart()
         }
-        return 2
     }
 
-    function gridSize(size, axis) {
-        const n = spanFor(size, axis)
-        return n * area.unit + (n - 1) * area.gap
+    Timer {
+        id: alignTimer
+        interval: 60
+        onTriggered: area.alignDroppedGroup()
+    }
+
+    // ---- 分组拖动 ----
+    function startGroupDrag(groupIndex, sceneX, sceneY) {
+        frozenRowX = columnsRow.x
+        groupDragIndex = groupIndex
+        groupDragName = area.groups[groupIndex] ? area.groups[groupIndex].name : ""
+        const item = area.groupItem(groupIndex)
+        groupDragHeight = item ? item.height : Math.round(area.unit * 2.2)
+        groupDragPos = area.mapFromItem(null, sceneX, sceneY)
+    }
+
+    function computeDrop(sceneX, sceneY) {
+        if (area.groupDragIndex < 0) {
+            return
+        }
+        const p = area.mapFromItem(null, sceneX, sceneY)
+        const contentX = p.x + flick.contentX
+        const contentY = p.y + flick.contentY
+
+        const realCount = area.realColumnCount
+        let targetCol = -1
+        for (let c = 0; c < realCount; ++c) {
+            const col = area.columnItems[c]
+            if (!col) {
+                continue
+            }
+            if (contentX >= col.x - area.columnGap / 2 && contentX <= col.x + col.width + area.columnGap / 2) {
+                targetCol = c
+                break
+            }
+        }
+        if (targetCol < 0) {
+            const last = area.columnItems[realCount - 1]
+            if (last && contentX > last.x + last.width + area.columnGap / 2) {
+                // 拖到最右列之外：实时预览一个新列
+                area.previewColumn = true
+                area.dropColumn = realCount
+                area.dropIndex = 0
+                area.dropX = last.x + last.width + area.columnGap
+                let pb = Math.round((p.y + area.groupDragHeight) / area.slotStep) * area.slotStep
+                area.dropY = Math.max(0, Math.min(pb - area.groupDragHeight, flick.height - area.groupDragHeight))
+                return
+            }
+            targetCol = 0
+        }
+        area.previewColumn = false
+
+        const effCol = Math.min(targetCol, realCount - 1)
+        const colItem = area.columnItems[effCol]
+        let idx = 0
+        if (colItem) {
+            // 计算插入位置时排除被拖动的组本身，避免落位偏一位
+            const raw = area.rawGroupsForColumn(effCol).filter(e => e.gi !== area.groupDragIndex)
+            idx = raw.length
+            for (let i = 0; i < raw.length; ++i) {
+                const item = area.groupItem(raw[i].gi)
+                if (!item) {
+                    continue
+                }
+                if (contentY < colItem.y + item.y + item.height / 2) {
+                    idx = i
+                    break
+                }
+            }
+            const top = colItem.mapToItem(area, 0, 0)
+            area.dropX = top.x
+            // 吸附基准改为“下沿”：让槽位下边框落在磁贴行的网格线上
+            let slotBottom = Math.round((p.y + area.groupDragHeight) / area.slotStep) * area.slotStep
+            let slotY = slotBottom - area.groupDragHeight
+            area.dropY = Math.max(0, Math.min(slotY, flick.height - area.groupDragHeight))
+        }
+        area.dropColumn = effCol
+        area.dropIndex = idx
+    }
+
+    function updateGroupDrag(sceneX, sceneY) {
+        if (groupDragIndex < 0) {
+            return
+        }
+        groupDragPos = area.mapFromItem(null, sceneX, sceneY)
+        area.computeDrop(sceneX, sceneY)
+    }
+
+    function cancelGroupDrag() {
+        groupDragIndex = -1
+        dropColumn = -1
+        dropIndex = -1
+        previewColumn = false
+    }
+
+    function endGroupDrag(sceneX, sceneY) {
+        const gi = area.groupDragIndex
+        const dropCol = area.dropColumn
+        const dropIdx = area.dropIndex
+        const wasPreview = area.previewColumn
+        area.groupDragIndex = -1
+        area.dropColumn = -1
+        area.dropIndex = -1
+        area.previewColumn = false
+        if (gi < 0 || groups.length <= 1) {
+            return
+        }
+
+        const p = area.mapFromItem(null, sceneX, sceneY)
+        const contentX = p.x + flick.contentX
+        const contentY = p.y + flick.contentY
+
+        const cols = area.columnsData()
+        const g = area.groups[gi]
+        let fromCol = -1
+        let fromPos = -1
+        for (let c = 0; c < cols.length; ++c) {
+            const k = cols[c].indexOf(g)
+            if (k >= 0) {
+                fromCol = c
+                fromPos = k
+                cols[c].splice(k, 1)
+                break
+            }
+        }
+        if (fromCol < 0) {
+            return
+        }
+
+        let targetCol = -1
+        let insert = 0
+        if (wasPreview) {
+            targetCol = cols.length
+            cols.push([])
+            insert = 0
+        } else if (dropCol >= 0) {
+            targetCol = Math.min(dropCol, cols.length)
+            if (targetCol === cols.length) {
+                cols.push([])
+            }
+            insert = Math.max(0, Math.min(dropIdx, cols[targetCol].length))
+        } else {
+            return
+        }
+
+        // 落在列末尾的空白区域时，记录一个上边距，让组停留在松手的位置
+        let gapBefore = 0
+        if (!wasPreview && targetCol < cols.length && insert >= cols[targetCol].length) {
+            const colItem = area.columnItems[targetCol]
+            const raw = area.rawGroupsForColumn(targetCol).filter(e => e.gi !== gi)
+            if (colItem && raw.length > 0) {
+                const last = area.groupItem(raw[raw.length - 1].gi)
+                if (last) {
+                    const lastBottom = colItem.y + last.y + last.height
+                    // 用槽位本身的 y 反推上边距，保证落点和悬浮槽位完全一致
+                    const slotContentY = area.dropY + flick.contentY
+                    gapBefore = Math.max(0, Math.round(slotContentY - lastBottom - area.gap))
+                }
+            }
+        }
+        g.gapBefore = gapBefore
+
+        cols[targetCol].splice(insert, 0, g)
+
+        const nonEmpty = cols.filter(list => list.length > 0)
+        const flat = []
+        for (let c = 0; c < nonEmpty.length; ++c) {
+            for (const gg of nonEmpty[c]) {
+                gg.column = c
+                flat.push(gg)
+            }
+        }
+        area.groups = flat
+        area.alignGroupIndex = flat.indexOf(g)
+        area.alignTargetY = area.dropY
+        area.alignTries = 0
+        area.touch()
+        alignTimer.restart()
     }
 
     PlasmaExtras.PlaceholderMessage {
@@ -327,126 +674,203 @@ Item {
     Flickable {
         id: flick
         anchors.fill: parent
-        visible: area.totalTiles > 0
         clip: true
-        contentWidth: width
-        contentHeight: content.implicitHeight
+        contentWidth: columnsRow.x + columnsRow.implicitWidth + area.gap
+        contentHeight: columnsRow.implicitHeight
         boundsBehavior: Flickable.StopAtBounds
 
-        ColumnLayout {
-            id: content
-            width: flick.width
-            spacing: Kirigami.Units.smallSpacing
+        Row {
+            id: columnsRow
+            spacing: area.columnGap
+            // 拖动期间固定横向偏移，避免窗口变宽时整行重新居中导致列跟着动
+            x: area.groupDragIndex >= 0
+               ? area.frozenRowX
+               : Math.max(0, (flick.width - implicitWidth) / 2)
 
             Repeater {
-                id: groupRepeater
-                model: area.groups
+                id: columnRepeater
+                model: area.columnCount
 
                 delegate: ColumnLayout {
-                    id: groupColumn
+                    id: columnColumn
 
-                    property var groupData: modelData
-                    property int groupIndex: index
+                    property int columnIndex: index
+                    property alias groupRepeater: innerGroupRepeater
 
-                    property alias grid: gridLayout
-                    property alias tilesRepeater: tileRepeater
+                    width: area.columnWidth
+                    spacing: area.gap
 
-                    Layout.fillWidth: true
-                    spacing: 2
+                    Repeater {
+                        id: innerGroupRepeater
+                        model: area.groupsForColumn(columnColumn.columnIndex)
 
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: headerRow.implicitHeight
-                        radius: 3
-                        color: "transparent"
+                        delegate: ColumnLayout {
+                            id: groupColumn
 
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton
-                            onClicked: area.selectGroup(groupColumn.groupIndex)
-                        }
+                            property var entry: modelData
+                            property int groupIndex: entry.gi
+                            property var groupData: entry.g
 
-                        RowLayout {
-                            id: headerRow
-                            anchors.fill: parent
-                            spacing: 4
+                            property alias grid: gridLayout
+                            property alias tilesRepeater: tileRepeater
 
-                            PlasmaComponents3.Label {
-                                text: groupColumn.groupData.name
-                                font.bold: true
-                                font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                opacity: 0.75
-                            }
-
-                        Item {
                             Layout.fillWidth: true
-                        }
+                            Layout.topMargin: groupColumn.groupData.gapBefore ?? 0
+                            spacing: 2
 
-                        PlasmaComponents3.ToolButton {
-                            icon.name: "list-add"
-                            text: i18n("新建分组")
-                            display: PlasmaComponents3.AbstractButton.IconOnly
-                            onClicked: area.openGroupDialog(-1, "add")
-                            PlasmaComponents3.ToolTip.text: i18n("新建分组")
-                            PlasmaComponents3.ToolTip.visible: hovered
-                            PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
-                        }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: headerRow.implicitHeight
+                                radius: 3
+                                color: "transparent"
 
-                        PlasmaComponents3.ToolButton {
-                            icon.name: "overflow-menu"
-                            text: i18n("分组菜单")
-                            display: PlasmaComponents3.AbstractButton.IconOnly
-                            onClicked: {
-                                area.menuGroupIndex = groupColumn.groupIndex
-                                groupMenu.popup()
-                            }
-                            PlasmaComponents3.ToolTip.text: i18n("分组菜单")
-                            PlasmaComponents3.ToolTip.visible: hovered
-                            PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
-                        }
-                        }
-                    }
-
-                    GridLayout {
-                        id: gridLayout
-                        Layout.alignment: Qt.AlignHCenter
-                        columns: area.columns
-                        columnSpacing: area.gap
-                        rowSpacing: area.gap
-
-                        Repeater {
-                            id: tileRepeater
-                            model: groupColumn.groupData.tiles
-
-                            delegate: WinTile {
-                                id: winTile
-
-                                tileData: modelData
-                                unit: area.unit
-
-                                Layout.columnSpan: area.spanFor(tileData.size, "w")
-                                Layout.rowSpan: area.spanFor(tileData.size, "h")
-                                Layout.preferredWidth: area.gridSize(tileData.size, "w")
-                                Layout.preferredHeight: area.gridSize(tileData.size, "h")
-
-                                onActivated: area.launch(tileData)
-                                onDragStarted: area.startDrag(groupColumn.groupIndex, index, tileData)
-                                onDragMoved: (x, y) => area.updateDrag(x, y)
-                                onDragEnded: (x, y) => area.endDrag(x, y)
-                                onContextRequested: {
-                                    area.menuGroupIndex = groupColumn.groupIndex
-                                    area.menuTileIndex = index
-                                    tileMenu.popup()
+                                MouseArea {
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton
+                                    onClicked: area.selectGroup(groupColumn.groupIndex)
                                 }
+
+                                RowLayout {
+                                    id: headerRow
+                                    anchors.fill: parent
+                                    spacing: 4
+
+                                    PlasmaComponents3.Label {
+                                        text: groupColumn.groupData.name
+                                        font.bold: true
+                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        opacity: 0.75
+                                    }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents3.ToolButton {
+                                        icon.name: "list-add"
+                                        text: i18n("新建分组")
+                                        display: PlasmaComponents3.AbstractButton.IconOnly
+                                        onClicked: area.openGroupDialog(-1, "add")
+                                        PlasmaComponents3.ToolTip.text: i18n("新建分组")
+                                        PlasmaComponents3.ToolTip.visible: hovered
+                                        PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                    }
+
+                                    Item {
+                                        width: 22
+                                        height: 22
+
+                                        Kirigami.Icon {
+                                            anchors.fill: parent
+                                            source: "overflow-menu"
+                                            opacity: 0.8
+                                        }
+
+                                        MouseArea {
+                                            id: handleMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            // 拖动分组时不让外层 Flickable 抢走鼠标
+                                            preventStealing: true
+
+                                            property point pressPoint
+                                            property bool dragging: false
+
+                                            onPressed: mouse => {
+                                                pressPoint = Qt.point(mouse.x, mouse.y)
+                                                dragging = false
+                                            }
+                                            onPositionChanged: mouse => {
+                                                if (!pressed) {
+                                                    return
+                                                }
+                                                const p = mapToItem(null, mouse.x, mouse.y)
+                                                if (!dragging && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) > 6) {
+                                                    dragging = true
+                                                    area.startGroupDrag(groupColumn.groupIndex, p.x, p.y)
+                                                }
+                                                if (dragging) {
+                                                    area.updateGroupDrag(p.x, p.y)
+                                                }
+                                            }
+                                            onReleased: mouse => {
+                                                if (dragging) {
+                                                    dragging = false
+                                                    const p = mapToItem(null, mouse.x, mouse.y)
+                                                    area.endGroupDrag(p.x, p.y)
+                                                } else {
+                                                    area.menuGroupIndex = groupColumn.groupIndex
+                                                    groupMenu.popup()
+                                                }
+                                            }
+                                            onCanceled: {
+                                                if (dragging) {
+                                                    dragging = false
+                                                    area.cancelGroupDrag()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            GridLayout {
+                                id: gridLayout
+                                Layout.alignment: Qt.AlignHCenter
+                                columns: area.columns
+                                columnSpacing: area.gap
+                                rowSpacing: area.gap
+
+                                Repeater {
+                                    id: tileRepeater
+                                    model: groupColumn.groupData.tiles
+
+                                    delegate: WinTile {
+                                        id: winTile
+
+                                        tileData: modelData
+                                        unit: area.unit
+
+                                        Layout.columnSpan: area.spanFor(tileData.size, "w")
+                                        Layout.rowSpan: area.spanFor(tileData.size, "h")
+                                        Layout.preferredWidth: area.gridSize(tileData.size, "w")
+                                        Layout.preferredHeight: area.gridSize(tileData.size, "h")
+
+                                        onActivated: area.launch(tileData)
+                                        onDragStarted: area.startDrag(groupColumn.groupIndex, index, tileData)
+                                        onDragMoved: (x, y) => area.updateDrag(x, y)
+                                        onDragEnded: (x, y) => area.endDrag(x, y)
+                                        onDragCanceled: area.cancelDrag()
+                                        onContextRequested: {
+                                            area.menuGroupIndex = groupColumn.groupIndex
+                                            area.menuTileIndex = index
+                                            tileMenu.popup()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        onItemAdded: (index, item) => {
+                            area.groupItems[item.groupIndex] = item
+                        }
+                        onItemRemoved: (index, item) => {
+                            if (area.groupItems[item.groupIndex] === item) {
+                                delete area.groupItems[item.groupIndex]
                             }
                         }
                     }
                 }
-            }
 
-            Item {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Kirigami.Units.smallSpacing
+                onItemAdded: (index, item) => {
+                    area.columnItems[index] = item
+                }
+                onItemRemoved: (index, item) => {
+                    if (area.columnItems[index] === item) {
+                        delete area.columnItems[index]
+                    }
+                }
             }
         }
     }
@@ -469,6 +893,56 @@ Item {
             width: Math.round(parent.width * 0.4)
             height: width
             source: area.dragInfo && area.dragInfo.tile ? (area.dragInfo.tile.icon || "application-x-executable") : ""
+        }
+    }
+
+    Rectangle {
+        id: previewColumnBg
+        visible: area.previewColumn && area.groupDragIndex >= 0
+        z: 98
+        x: Math.round(area.dropX)
+        y: 0
+        width: area.columnWidth
+        height: flick.height
+        radius: 4
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.06)
+        border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.25)
+        border.width: 1
+    }
+
+    Rectangle {
+        id: dropSlot
+        visible: area.groupDragIndex >= 0 && area.dropColumn >= 0
+        z: 99
+        x: Math.round(area.dropX)
+        y: Math.round(area.dropY)
+        width: area.columnWidth
+        height: Math.round(area.groupDragHeight)
+        radius: 4
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.12)
+        border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.55)
+        border.width: 1
+    }
+
+    Rectangle {
+        id: groupGhost
+        visible: area.groupDragIndex >= 0
+        z: 101
+        x: Math.round(area.groupDragPos.x - width / 2)
+        y: Math.round(area.groupDragPos.y - height / 2)
+        width: Math.min(160, groupLabel.implicitWidth + 20)
+        height: 32
+        radius: 4
+        color: Qt.alpha(Kirigami.Theme.highlightColor, 0.55)
+        border.color: Kirigami.Theme.highlightColor
+        border.width: 1
+
+        PlasmaComponents3.Label {
+            id: groupLabel
+            anchors.centerIn: parent
+            text: area.groupDragName
+            font.pointSize: Kirigami.Theme.smallFont.pointSize
+            color: Kirigami.Theme.highlightedTextColor
         }
     }
 
@@ -527,7 +1001,11 @@ Item {
         if (area.menuGroupIndex < 0 || area.menuTileIndex < 0) {
             return ""
         }
-        return area.groups[area.menuGroupIndex].tiles[area.menuTileIndex].size
+        const g = area.groups[area.menuGroupIndex]
+        if (!g || !g.tiles || area.menuTileIndex >= g.tiles.length) {
+            return ""
+        }
+        return g.tiles[area.menuTileIndex].size
     }
 
     PlasmaComponents3.Menu {
