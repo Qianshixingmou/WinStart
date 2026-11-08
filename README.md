@@ -124,3 +124,9 @@ contents/
 
 - `shell.nix`：cmake、ninja、gcc、pkg-config、qt6.qtbase、qt6.qtdeclarative
 - 通用工具也可以用 `nix profile add nixpkgs#cmake nixpkgs#ninja nixpkgs#gcc nixpkgs#pkg-config` 装到用户 profile，Qt 依赖仍建议留在 `shell.nix` 里保持版本一致。
+
+## License / 许可证
+
+MIT License © 2026 Qianshixingmou
+
+项目主页：https://github.com/Qianshixingmou/WinStart

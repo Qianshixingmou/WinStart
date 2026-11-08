@@ -8,8 +8,16 @@
         "Description[zh_CN]": "应用列表 / 磁贴",
         "Icon": "start-here-kde",
         "Category": "Application Launchers",
-        "License": "GPL-2.0-or-later",
-        "Version": "0.1.0"
+        "License": "MIT",
+        "Version": "0.2.0",
+        "Authors": [
+            {
+                "Name": "Qianshixingmou"
+            }
+        ],
+        "Website": "https://github.com/Qianshixingmou/WinStart",
+        "BugReportUrl": "https://github.com/Qianshixingmou/WinStart/issues",
+        "Copyright": "2026 Qianshixingmou"
     },
     "X-Plasma-API-Minimum-Version": "6.0",
     "X-Plasma-Provides": [
