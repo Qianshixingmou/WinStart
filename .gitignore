@@ -1,2 +1,2 @@
-.DS_Store
-*.log
+show-desktop/build/
+show-desktop/contents/ui/plugin/*.so

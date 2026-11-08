@@ -12,6 +12,7 @@ Item {
 
     property var applet: null
     property var favoritesModel: null
+    property var appActivator: null
 
     signal closeRequested()
     signal columnLayoutChanged(int count)
@@ -21,8 +22,12 @@ Item {
     readonly property int columns: 6
     readonly property int gap: 6
     readonly property int columnGap: Math.round(area.unit * 0.6)
-    // 槽位按“一个正常磁贴（2×2）”的大小步进，不要太碎
-    readonly property int slotStep: area.unit * 2 + area.gap
+    // 拖动时槽位步长 = 被拖组的磁贴区高度 + 间距（多行组按多行算）
+    readonly property int slotStep: {
+        const grid = Math.max(0, Math.round(area.groupDragHeight - area.groupTitleHeight))
+        const oneRow = area.unit * 2 + area.gap
+        return Math.max(oneRow, grid) + area.gap
+    }
     readonly property int columnWidth: area.columns * area.unit + (area.columns - 1) * area.gap
 
     // 每个 group: { name, column, tiles }
@@ -57,6 +62,13 @@ Item {
     property string groupDragName: ""
     property point groupDragPos: Qt.point(0, 0)
     property real groupDragHeight: 80
+    property real groupTitleHeight: 0
+    readonly property int slotHeight: {
+        const grid = Math.max(0, Math.round(area.groupDragHeight - area.groupTitleHeight))
+        return Math.max(area.unit * 2 + area.gap, grid)
+    }
+    property bool dropAtEnd: false
+    property int dropGapRows: 0
 
     property int dropColumn: -1
     property int dropIndex: -1
@@ -258,16 +270,29 @@ Item {
             return
         }
         if (tile.type === "app") {
+            if (appActivator && appActivator(tile.favoriteId)) {
+                area.closeRequested()
+                return
+            }
             const fm = favoritesModel
             if (!fm) {
                 return
             }
-            let i = fm.favorites.indexOf(tile.favoriteId)
-            if (i < 0) {
-                fm.addFavorite(tile.favoriteId, fm.count)
-                i = fm.favorites.indexOf(tile.favoriteId)
+            const role = Qt.UserRole + 3 // KAStatsFavoritesModel 的 favoriteId 角色
+            function findRow() {
+                for (let i = 0; i < fm.count; ++i) {
+                    if (String(fm.index(i, 0).data(role)) === String(tile.favoriteId)) {
+                        return i
+                    }
+                }
+                return -1
             }
-            if (i >= 0 && fm.trigger(i, "", null)) {
+            let row = findRow()
+            if (row < 0) {
+                fm.addFavorite(tile.favoriteId, fm.count)
+                row = findRow()
+            }
+            if (row >= 0 && fm.trigger(row, "", null)) {
                 area.closeRequested()
             }
         } else if (tile.type === "place") {
@@ -309,11 +334,14 @@ Item {
     }
 
     function removeGroup(index) {
-        if (groups.length <= 1) {
+        if (index < 0 || index >= groups.length) {
             return
         }
         groups.splice(index, 1)
         normalizeColumns()
+        if (groups.length > 0) {
+            area.selectGroup(Math.min(area.selectedGroup, groups.length - 1))
+        }
         touch()
     }
 
@@ -473,7 +501,8 @@ Item {
             return
         }
         const actualY = item.mapToItem(area, 0, 0).y
-        const delta = Math.round(area.alignTargetY - actualY)
+        const actualBottom = actualY + item.height
+        const delta = Math.round(area.alignTargetY - actualBottom)
         if (Math.abs(delta) >= 1) {
             g.gapBefore = Math.max(0, Math.round((g.gapBefore ?? 0) + delta))
             area.alignTries += 1
@@ -495,6 +524,7 @@ Item {
         groupDragName = area.groups[groupIndex] ? area.groups[groupIndex].name : ""
         const item = area.groupItem(groupIndex)
         groupDragHeight = item ? item.height : Math.round(area.unit * 2.2)
+        groupTitleHeight = (item && item.grid) ? Math.max(0, item.height - item.grid.height - 2) : Math.round(area.unit * 0.6)
         groupDragPos = area.mapFromItem(null, sceneX, sceneY)
     }
 
@@ -506,6 +536,7 @@ Item {
         const contentX = p.x + flick.contentX
         const contentY = p.y + flick.contentY
 
+        area.dropAtEnd = false
         const realCount = area.realColumnCount
         let targetCol = -1
         for (let c = 0; c < realCount; ++c) {
@@ -526,8 +557,9 @@ Item {
                 area.dropColumn = realCount
                 area.dropIndex = 0
                 area.dropX = last.x + last.width + area.columnGap
-                let pb = Math.round((p.y + area.groupDragHeight) / area.slotStep) * area.slotStep
-                area.dropY = Math.max(0, Math.min(pb - area.groupDragHeight, flick.height - area.groupDragHeight))
+                const k = Math.max(0, Math.floor(Math.max(0, p.y - area.groupTitleHeight) / area.slotStep))
+                area.dropGapRows = k
+                area.dropY = Math.max(0, Math.min(area.groupTitleHeight + k * area.slotStep, flick.height - area.slotHeight))
                 return
             }
             targetCol = 0
@@ -536,30 +568,35 @@ Item {
 
         const effCol = Math.min(targetCol, realCount - 1)
         const colItem = area.columnItems[effCol]
-        let idx = 0
         if (colItem) {
-            // 计算插入位置时排除被拖动的组本身，避免落位偏一位
+            // 以“指针上方最近的组”为锚点计算槽位；没有则用列顶部
             const raw = area.rawGroupsForColumn(effCol).filter(e => e.gi !== area.groupDragIndex)
-            idx = raw.length
+            let prevPos = -1
+            let prevBottom = colItem.y
             for (let i = 0; i < raw.length; ++i) {
                 const item = area.groupItem(raw[i].gi)
                 if (!item) {
                     continue
                 }
-                if (contentY < colItem.y + item.y + item.height / 2) {
-                    idx = i
-                    break
+                const bottom = colItem.y + item.y + item.height
+                if (bottom <= contentY) {
+                    prevPos = i
+                    prevBottom = bottom
                 }
             }
+            const origin = (prevPos >= 0 ? prevBottom + area.gap : colItem.y) + area.groupTitleHeight
+            const k = Math.max(0, Math.floor((contentY - origin) / area.slotStep))
+            area.dropGapRows = k
+            area.dropColumn = effCol
+            area.dropIndex = prevPos + 1
             const top = colItem.mapToItem(area, 0, 0)
             area.dropX = top.x
-            // 吸附基准改为“下沿”：让槽位下边框落在磁贴行的网格线上
-            let slotBottom = Math.round((p.y + area.groupDragHeight) / area.slotStep) * area.slotStep
-            let slotY = slotBottom - area.groupDragHeight
-            area.dropY = Math.max(0, Math.min(slotY, flick.height - area.groupDragHeight))
+            area.dropY = Math.max(0, Math.min(origin + k * area.slotStep - flick.contentY, flick.height - area.slotHeight))
+        } else {
+            area.dropColumn = effCol
+            area.dropIndex = 0
+            area.dropGapRows = 0
         }
-        area.dropColumn = effCol
-        area.dropIndex = idx
     }
 
     function updateGroupDrag(sceneX, sceneY) {
@@ -594,6 +631,15 @@ Item {
         const contentX = p.x + flick.contentX
         const contentY = p.y + flick.contentY
 
+        const oldGroups = area.groups.slice()
+        const oldAbs = []
+        const oldH = []
+        for (let i = 0; i < oldGroups.length; ++i) {
+            const it = area.groupItem(i)
+            oldAbs.push(it ? it.mapToItem(area, 0, 0).y + flick.contentY : 0)
+            oldH.push(it ? it.height : Math.round(area.unit * 2.2))
+        }
+
         const cols = area.columnsData()
         const g = area.groups[gi]
         let fromCol = -1
@@ -622,26 +668,17 @@ Item {
             if (targetCol === cols.length) {
                 cols.push([])
             }
-            insert = Math.max(0, Math.min(dropIdx, cols[targetCol].length))
+            insert = area.dropAtEnd
+                ? cols[targetCol].length
+                : Math.max(0, Math.min(dropIdx, cols[targetCol].length))
         } else {
             return
         }
 
         // 落在列末尾的空白区域时，记录一个上边距，让组停留在松手的位置
-        let gapBefore = 0
-        if (!wasPreview && targetCol < cols.length && insert >= cols[targetCol].length) {
-            const colItem = area.columnItems[targetCol]
-            const raw = area.rawGroupsForColumn(targetCol).filter(e => e.gi !== gi)
-            if (colItem && raw.length > 0) {
-                const last = area.groupItem(raw[raw.length - 1].gi)
-                if (last) {
-                    const lastBottom = colItem.y + last.y + last.height
-                    // 用槽位本身的 y 反推上边距，保证落点和悬浮槽位完全一致
-                    const slotContentY = area.dropY + flick.contentY
-                    gapBefore = Math.max(0, Math.round(slotContentY - lastBottom - area.gap))
-                }
-            }
-        }
+        // 槽位相对“上一个组”的底偏移 k 行，落位时直接换算成上边距
+        // 新列同样要按 k 行留空，否则会先画在顶部再被校准推下来
+        const gapBefore = Math.max(0, area.dropGapRows * area.slotStep)
         g.gapBefore = gapBefore
 
         cols[targetCol].splice(insert, 0, g)
@@ -654,9 +691,30 @@ Item {
                 flat.push(gg)
             }
         }
+
+        // 其它组保持各自的绝对位置：只调整它们的上边距来抵消上方组的位置变化
+        const cursor = ({})
+        for (const gg of flat) {
+            const c = gg.column
+            const isFirst = !(c in cursor)
+            const prevBottom = isFirst ? 0 : cursor[c]
+            const base = isFirst ? 0 : prevBottom + area.gap
+            const oldIndex = oldGroups.indexOf(gg)
+            let y
+            if (gg === g) {
+                y = base + Math.max(0, g.gapBefore)
+            } else {
+                const desired = oldIndex >= 0 ? oldAbs[oldIndex] : base
+                y = Math.max(base, desired)
+            }
+            gg.gapBefore = Math.max(0, Math.round(y - base))
+            const h = (gg === g) ? area.groupDragHeight : (oldIndex >= 0 ? oldH[oldIndex] : Math.round(area.unit * 2.2))
+            cursor[c] = y + h
+        }
+
         area.groups = flat
         area.alignGroupIndex = flat.indexOf(g)
-        area.alignTargetY = area.dropY
+        area.alignTargetY = area.dropY + area.slotHeight
         area.alignTries = 0
         area.touch()
         alignTimer.restart()
@@ -669,6 +727,16 @@ Item {
         iconName: "preferences-desktop-icons"
         text: i18n("还没有磁贴")
         explanation: i18n("右键应用选“固定到开始屏幕”，或直接把应用拖到某个分组里")
+    }
+
+    PlasmaComponents3.Button {
+        visible: area.groups.length === 0
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: Math.round(area.unit * 1.5)
+        text: i18n("新建分组")
+        icon.name: "list-add"
+        onClicked: area.openGroupDialog(-1, "add")
     }
 
     Flickable {
@@ -720,7 +788,8 @@ Item {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                implicitHeight: headerRow.implicitHeight
+                                // 固定标题高度：不再随 + 按钮移除而变矮；槽位计算会用实际标题高度
+                                implicitHeight: Math.round(area.unit * 0.7)
                                 radius: 3
                                 color: "transparent"
 
@@ -744,16 +813,6 @@ Item {
 
                                     Item {
                                         Layout.fillWidth: true
-                                    }
-
-                                    PlasmaComponents3.ToolButton {
-                                        icon.name: "list-add"
-                                        text: i18n("新建分组")
-                                        display: PlasmaComponents3.AbstractButton.IconOnly
-                                        onClicked: area.openGroupDialog(-1, "add")
-                                        PlasmaComponents3.ToolTip.text: i18n("新建分组")
-                                        PlasmaComponents3.ToolTip.visible: hovered
-                                        PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
                                     }
 
                                     Item {
@@ -817,7 +876,7 @@ Item {
 
                             GridLayout {
                                 id: gridLayout
-                                Layout.alignment: Qt.AlignHCenter
+                                Layout.alignment: Qt.AlignLeft | Qt.AlignTop
                                 columns: area.columns
                                 columnSpacing: area.gap
                                 rowSpacing: area.gap
@@ -917,7 +976,7 @@ Item {
         x: Math.round(area.dropX)
         y: Math.round(area.dropY)
         width: area.columnWidth
-        height: Math.round(area.groupDragHeight)
+        height: area.slotHeight
         radius: 4
         color: Qt.alpha(Kirigami.Theme.highlightColor, 0.12)
         border.color: Qt.alpha(Kirigami.Theme.highlightColor, 0.55)
@@ -1012,6 +1071,14 @@ Item {
         id: groupMenu
 
         PlasmaComponents3.MenuItem {
+            text: i18n("新建分组")
+            icon.name: "list-add"
+            onTriggered: area.openGroupDialog(-1, "add")
+        }
+
+        PlasmaComponents3.MenuSeparator {}
+
+        PlasmaComponents3.MenuItem {
             text: i18n("重命名分组")
             icon.name: "edit-rename"
             onTriggered: area.openGroupDialog(area.menuGroupIndex, "rename")
@@ -1020,7 +1087,6 @@ Item {
         PlasmaComponents3.MenuItem {
             text: i18n("删除分组")
             icon.name: "edit-delete"
-            enabled: area.groups.length > 1
             onTriggered: area.removeGroup(area.menuGroupIndex)
         }
     }

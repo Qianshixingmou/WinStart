@@ -33,5 +33,9 @@
         <entry name="tileLayout" type="String">
             <default></default>
         </entry>
+        <!-- 逗号分隔的隐藏文件夹显示名，例如 "桌面,视频" -->
+        <entry name="hiddenPlaces" type="String">
+            <default></default>
+        </entry>
     </group>
 </kcfg>

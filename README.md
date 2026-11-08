@@ -99,3 +99,28 @@ contents/
   ui/TileArea.qml        # 磁贴区（分组/尺寸/持久化）
   ui/WinTile.qml         # 单个磁贴
 ```
+
+## 附带组件：显示桌面（细条）
+
+`show-desktop/` 是一个独立的小组件，提供 Windows 风格的面板细条：点击显示/恢复桌面，外观是一条 2px 的竖线（竖向面板时是横线）。
+
+它用一个小型 C++ QML 插件调用 KWin 的 `org.kde.KWin.showDesktop`，因为 Plasma 6 的 QML 侧没有可直接调用的 DBus 客户端。
+
+### 构建（NixOS）
+
+```bash
+./build-show-desktop.sh
+```
+
+脚本会自动进入项目 `shell.nix` 的编译环境（Qt 6.11 + cmake + ninja），编译完成后安装到：
+
+```
+~/.local/share/plasma/plasmoids/org.qianshi.showdesktop/
+```
+
+然后在面板“添加小组件”里搜索“显示桌面（细条）”。
+
+### 构建依赖
+
+- `shell.nix`：cmake、ninja、gcc、pkg-config、qt6.qtbase、qt6.qtdeclarative
+- 通用工具也可以用 `nix profile add nixpkgs#cmake nixpkgs#ninja nixpkgs#gcc nixpkgs#pkg-config` 装到用户 profile，Qt 依赖仍建议留在 `shell.nix` 里保持版本一致。

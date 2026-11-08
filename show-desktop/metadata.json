@@ -1,0 +1,15 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Id": "org.qianshi.showdesktop",
+        "Name": "显示桌面（细条）",
+        "Name[zh_CN]": "显示桌面（细条）",
+        "Description": "Windows 风格的面板细条，点击显示/恢复桌面",
+        "Description[zh_CN]": "Windows 风格的面板细条，点击显示/恢复桌面",
+        "Icon": "user-desktop",
+        "Category": "Application Launchers",
+        "License": "GPL-2.0-or-later",
+        "Version": "0.1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

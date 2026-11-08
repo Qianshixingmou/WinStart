@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQml.Models
 
 import org.kde.plasma.plasmoid
 import org.kde.plasma.components as PlasmaComponents3
@@ -23,6 +24,68 @@ Item {
 
     KCoreAddons.KUser {
         id: kuser
+    }
+
+    readonly property var hiddenNames: String(Plasmoid.configuration.hiddenPlaces || "").split(",").filter(s => s.length > 0)
+    // KDE 默认把“视频”标记为隐藏，places 模型里没有它，这里在启用时补一条
+    readonly property bool showVideos: hiddenNames.indexOf(i18n("视频")) < 0
+    readonly property string videosUrl: "file:///home/" + kuser.loginName + "/Videos"
+
+    ListModel {
+        id: placeEntries
+    }
+
+    function placeIcon(label) {
+        if (label === i18n("主文件夹")) return "user-home"
+        if (label === i18n("桌面")) return "folder-desktop"
+        if (label === i18n("文档")) return "folder-documents"
+        if (label === i18n("下载")) return "folder-downloads"
+        if (label === i18n("音乐")) return "folder-music"
+        if (label === i18n("图片")) return "folder-pictures"
+        if (label === i18n("视频")) return "folder-videos"
+        if (label === i18n("回收站")) return "user-trash"
+        return "folder"
+    }
+
+    function rebuildPlaceEntries() {
+        placeEntries.clear()
+        if (!rail.placesModel) {
+            return
+        }
+        const n = rail.placesModel.rowCount()
+        let videosDone = false
+        for (let i = 0; i < n; ++i) {
+            const idx = rail.placesModel.index(i, 0)
+            const label = String(idx.data(Qt.DisplayRole) ?? "")
+            const url = String(idx.data(Qt.UserRole + 3) ?? "")
+            if (label.length === 0 || url.length === 0) {
+                continue
+            }
+            if (label.indexOf("KRunner") >= 0) {
+                continue
+            }
+            if (rail.hiddenNames.indexOf(label) >= 0) {
+                continue
+            }
+            if (!videosDone && rail.showVideos && label === i18n("回收站")) {
+                placeEntries.append({ label: i18n("视频"), url: rail.videosUrl, row: -1, icon: "folder-videos" })
+                videosDone = true
+            }
+            placeEntries.append({ label: label, url: url, row: i, icon: placeIcon(label) })
+        }
+        if (!videosDone && rail.showVideos) {
+            placeEntries.append({ label: i18n("视频"), url: rail.videosUrl, row: -1, icon: "folder-videos" })
+        }
+    }
+
+    Component.onCompleted: rebuildPlaceEntries()
+
+    Connections {
+        target: rail.placesModel
+        ignoreUnknownSignals: true
+        function onCountChanged() {
+            rail.rebuildPlaceEntries()
+        }
     }
 
     function openPowerMenu() {
@@ -66,44 +129,42 @@ Item {
             }
         }
 
-        // 文件夹快捷入口
+        // 文件夹快捷入口（和头像拉开一点距离）
         ListView {
             id: placesView
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.topMargin: Math.round(Kirigami.Units.gridUnit * 0.5)
             clip: true
             boundsBehavior: Flickable.StopAtBounds
-            model: rail.placesModel
+            model: placeEntries
 
             delegate: PlasmaComponents3.ItemDelegate {
-                id: placeItem
-
-                readonly property bool isRecent: String(model.url ?? "").startsWith("recent")
-                // 跳过“运行命令…”这类没有 URL 的条目
-                readonly property bool hiddenItem: isRecent || String(model.url ?? "").length === 0
-
                 width: ListView.view.width
-                height: hiddenItem ? 0 : Math.round(Kirigami.Units.gridUnit * 1.9)
-                visible: !hiddenItem
-                leftPadding: 4
+                height: Math.round(Kirigami.Units.gridUnit * 2.6)
+                leftPadding: 2
                 rightPadding: 2
-                spacing: 4
+                topPadding: 2
+                bottomPadding: 2
 
-                text: model.display
-
-                contentItem: RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
+                // 图标一行、文件名一行，纵向排列
+                contentItem: ColumnLayout {
+                    spacing: 2
 
                     Kirigami.Icon {
-                        source: model.decoration ?? ""
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
+                        source: model.icon
                     }
 
                     PlasmaComponents3.Label {
                         Layout.fillWidth: true
-                        text: placeItem.text
+                        Layout.alignment: Qt.AlignHCenter
+                        text: model.label
                         elide: Text.ElideRight
+                        maximumLineCount: 1
+                        horizontalAlignment: Text.AlignHCenter
                         font.pointSize: Kirigami.Theme.smallFont.pointSize
                     }
                 }
@@ -112,20 +173,25 @@ Item {
                     anchors.fill: parent
                     acceptedButtons: Qt.RightButton
                     onClicked: {
-                        rail.menuPlaceUrl = String(model.url ?? "")
-                        rail.menuPlaceLabel = String(model.display ?? "")
+                        rail.menuPlaceUrl = model.url
+                        rail.menuPlaceLabel = model.label
                         rail.placeMenu.popup()
                     }
                 }
 
                 onClicked: {
-                    if (rail.placesModel && rail.placesModel.trigger(index, "", null)) {
+                    if (model.row >= 0) {
+                        if (rail.placesModel && rail.placesModel.trigger(model.row, "", null)) {
+                            rail.closeRequested()
+                        }
+                    } else {
+                        Qt.openUrlExternally(model.url)
                         rail.closeRequested()
                     }
                 }
 
-                PlasmaComponents3.ToolTip.text: String(model.url ?? "")
-                PlasmaComponents3.ToolTip.visible: hovered && !hiddenItem
+                PlasmaComponents3.ToolTip.text: model.url
+                PlasmaComponents3.ToolTip.visible: hovered
                 PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
             }
         }

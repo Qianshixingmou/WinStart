@@ -9,6 +9,7 @@ import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 import org.kde.plasma.private.kicker as Kicker
 import org.kde.kirigami as Kirigami
+import org.kde.taskmanager as TaskManager
 
 Item {
     id: root
@@ -23,7 +24,7 @@ Item {
     readonly property int u: Kirigami.Units.gridUnit
 
     // 宽度固定：磁贴列、分界线不动；侧栏展开时应用列表变窄，收起时应用列表吃掉侧栏的宽度
-    readonly property int railWidth: Math.round(u * 3.9)
+    readonly property int railWidth: Math.round(u * 3.2)
     property int tileColumns: 1
     property int lastTileColumns: 1
     property bool previewingColumn: false
@@ -171,6 +172,67 @@ Item {
         id: powerSource
     }
 
+    TaskManager.TasksModel {
+        id: taskModel
+    }
+
+    // 统一的“应用条目”行为，供 AppRow 使用
+    readonly property var appActions: ({
+        isValid: function(favoriteId) {
+            const s = String(favoriteId ?? "")
+            return s.length > 0 && s !== "其他.desktop" && !s.endsWith("/其他.desktop")
+        },
+        activate: function(favoriteId, model, rowIndex) {
+            if (!root.appActions.isValid(favoriteId)) {
+                return
+            }
+            if (root.appActivator && root.appActivator(favoriteId)) {
+                root.closeMenu()
+                return
+            }
+            if (model && model.trigger(rowIndex, "", null)) {
+                root.closeMenu()
+            }
+        },
+        pin: function(favoriteId, label, icon) {
+            if (!root.appActions.isValid(favoriteId)) {
+                return
+            }
+            tileArea.pinApp(favoriteId, label, icon)
+        },
+        dragStarted: function(favoriteId, label, icon, x, y) {
+            tileArea.startExternalDrag(favoriteId, label, icon, x, y)
+        },
+        dragMoved: function(x, y) {
+            tileArea.updateDrag(x, y)
+        },
+        dragEnded: function(x, y) {
+            tileArea.endExternalDrag(x, y)
+        },
+        dragCanceled: function() {
+            tileArea.cancelExternalDrag()
+        }
+    })
+
+    // 应用已经在运行就把它激活/还原到前面，否则返回 false 走正常启动
+    readonly property var appActivator: function(favoriteId) {
+        if (!taskModel || taskModel.count === 0) {
+            return false
+        }
+        // AppId 角色是 Qt.UserRole + 1，值形如 "xxx.desktop"
+        const role = Qt.UserRole + 1
+        const target = String(favoriteId).replace(/\.desktop$/i, "").toLowerCase()
+        for (let i = 0; i < taskModel.count; ++i) {
+            const idx = taskModel.index(i, 0)
+            const appId = String(idx.data(role) ?? "").replace(/\.desktop$/i, "").toLowerCase()
+            if (appId === target) {
+                taskModel.requestActivate(idx)
+                return true
+            }
+        }
+        return false
+    }
+
     ColumnLayout {
         id: rootLayout
         anchors.fill: parent
@@ -275,67 +337,14 @@ Item {
                         onAppDragCanceled: tileArea.cancelExternalDrag()
                     }
 
-                    // 分类列表
-                    AppListView {
-                        id: categoryList
+                    // 系统分类：全部分类默认展开，分类头只显示图标
+                    CategoryList {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        visible: root.categoryMode && root.drilledModel === null && searchField.text.length === 0
+                        visible: root.categoryMode && searchField.text.length === 0
                         model: rootModel
-                        recentModel: recentSource
-                        showRecent: Plasmoid.configuration.showRecent
-                        onRecentActivated: root.closeMenu()
-                        onAppDragStarted: (favoriteId, label, icon, x, y) => tileArea.startExternalDrag(favoriteId, label, icon, x, y)
-                        onAppDragMoved: (x, y) => tileArea.updateDrag(x, y)
-                        onAppDragEnded: (x, y) => tileArea.endExternalDrag(x, y)
-                        onAppDragCanceled: tileArea.cancelExternalDrag()
-                        enableSections: false
-                        showChevron: true
-                        onDrillRequested: (index, label) => root.drillInto(index, label)
-                        onActivated: index => {
-                            if (rootModel.trigger(index, "", null)) {
-                                root.closeMenu()
-                            }
-                        }
-                    }
-
-                    // 进入某个分类
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        spacing: 0
-                        visible: root.categoryMode && root.drilledModel !== null && searchField.text.length === 0
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Layout.margins: 4
-
-                            PlasmaComponents3.ToolButton {
-                                icon.name: "arrow-left"
-                                text: i18n("返回")
-                                display: PlasmaComponents3.AbstractButton.IconOnly
-                                onClicked: root.drilledModel = null
-                            }
-
-                            PlasmaComponents3.Label {
-                                Layout.fillWidth: true
-                                text: root.drilledName
-                                font.bold: true
-                                elide: Text.ElideRight
-                            }
-                        }
-
-                        AppListView {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            model: root.drilledModel
-                            enableSections: true
-                            onActivated: index => {
-                                if (root.drilledModel && root.drilledModel.trigger(index, "", null)) {
-                                    root.closeMenu()
-                                }
-                            }
-                        }
+                        appActions: root.appActions
+                        onCloseRequested: root.closeMenu()
                     }
                 }
 
@@ -368,6 +377,7 @@ Item {
                 anchors.margins: Math.round(root.u * 0.5)
                 applet: root.applet
                 favoritesModel: rootModel.favoritesModel
+                appActivator: root.appActivator
                 onCloseRequested: root.closeMenu()
             }
         }
