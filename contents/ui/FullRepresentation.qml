@@ -172,6 +172,13 @@ Item {
         id: powerSource
     }
 
+    PowerMenu {
+        id: sharedPowerMenu
+        systemModel: powerSource
+        hiddenActions: String(Plasmoid.configuration.hiddenPowerActions || "").split(",").filter(s => s.length > 0)
+        preferredWidth: Plasmoid.configuration.powerMenuWidth > 0 ? Plasmoid.configuration.powerMenuWidth : 150
+    }
+
     TaskManager.TasksModel {
         id: taskModel
     }
@@ -233,6 +240,80 @@ Item {
         return false
     }
 
+    property var jumpItems: []
+
+    function refreshJumpItems() {
+        const out = []
+        if (root.categoryMode) {
+            for (let i = 0; i < rootModel.count; ++i) {
+                const label = String(rootModel.index(i, 0).data(Qt.DisplayRole) ?? "")
+                if (label.length === 0 || label === i18n("全部应用") || label === i18n("全部应用程序")) {
+                    continue
+                }
+                out.push({ label: label, index: i })
+            }
+        } else if (root.allAppsModel) {
+            const seen = ({})
+            for (let i = 0; i < root.allAppsModel.count; ++i) {
+                const g = String(root.allAppsModel.index(i, 0).data(Qt.UserRole + 2) ?? "")
+                if (g.length > 0) {
+                    seen[g] = true
+                }
+            }
+            // 显示完整 A–Z，没有应用的字母置灰
+            for (let c = 65; c <= 90; ++c) {
+                const letter = String.fromCharCode(c)
+                out.push({ label: letter, index: -1, available: !!seen[letter] })
+            }
+        }
+        root.jumpItems = out
+    }
+
+    QQC2.Popup {
+        id: jumpPopup
+        parent: appColumn
+        modal: false
+        dim: false
+        padding: 8
+        closePolicy: QQC2.Popup.CloseOnEscape | QQC2.Popup.CloseOnPressOutside
+        width: contentItem.implicitWidth + 16
+        height: contentItem.implicitHeight + 16
+
+        background: Rectangle {
+            color: Kirigami.Theme.backgroundColor
+            radius: 6
+            border.width: 1
+            border.color: Qt.alpha(Kirigami.Theme.textColor, 0.2)
+        }
+
+        contentItem: GridLayout {
+            columns: root.categoryMode ? 3 : 6
+            columnSpacing: 4
+            rowSpacing: 4
+
+            Repeater {
+                model: root.jumpItems
+
+                delegate: PlasmaComponents3.ToolButton {
+                    text: modelData.label
+                    display: PlasmaComponents3.AbstractButton.TextOnly
+                    implicitWidth: root.categoryMode ? 80 : 34
+                    implicitHeight: 30
+                    enabled: modelData.available !== false
+
+                    onClicked: {
+                        if (root.categoryMode) {
+                            categoryList.jumpToCategory(modelData.index)
+                        } else {
+                            appList.jumpToGroup(modelData.label)
+                        }
+                        jumpPopup.close()
+                    }
+                }
+            }
+        }
+    }
+
     ColumnLayout {
         id: rootLayout
         anchors.fill: parent
@@ -253,6 +334,7 @@ Item {
             applet: root.applet
             placesModel: placesSource
             systemModel: powerSource
+            powerMenu: sharedPowerMenu
 
             onCloseRequested: root.closeMenu()
             onPinPlaceRequested: (url, label) => tileArea.pinPlace(url, label)
@@ -304,6 +386,52 @@ Item {
                     Keys.onReturnPressed: searchResults.triggerFirst()
                     Keys.onEnterPressed: searchResults.triggerFirst()
                 }
+
+                PlasmaComponents3.ToolButton {
+                    id: jumpButton
+                    text: i18n("快速定位")
+                    display: PlasmaComponents3.AbstractButton.IconOnly
+                    implicitWidth: 28
+                    implicitHeight: 28
+
+                    // 3×3 的小方块，避免主题里 view-grid 画成点
+                    contentItem: Item {
+                        implicitWidth: 16
+                        implicitHeight: 16
+
+                        Grid {
+                            anchors.centerIn: parent
+                            columns: 3
+                            rows: 3
+                            columnSpacing: 2
+                            rowSpacing: 2
+
+                            Repeater {
+                                model: 9
+
+                                Rectangle {
+                                    width: 4
+                                    height: 4
+                                    radius: 1
+                                    color: Kirigami.Theme.textColor
+                                    opacity: 0.8
+                                }
+                            }
+                        }
+                    }
+
+                    onClicked: {
+                        root.refreshJumpItems()
+                        jumpPopup.open()
+                        Qt.callLater(function() {
+                            const p = jumpButton.mapToItem(appColumn, 0, jumpButton.height)
+                            jumpPopup.x = Math.max(4, Math.min(p.x + jumpButton.width - jumpPopup.width, appColumn.width - jumpPopup.width - 4))
+                            jumpPopup.y = p.y + 4
+                        })
+                    }
+                    PlasmaComponents3.ToolTip.text: i18n("快速定位")
+                    PlasmaComponents3.ToolTip.visible: hovered
+                }
             }
 
             Item {
@@ -339,6 +467,7 @@ Item {
 
                     // 系统分类：全部分类默认展开，分类头只显示图标
                     CategoryList {
+                        id: categoryList
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         visible: root.categoryMode && searchField.text.length === 0
@@ -389,6 +518,7 @@ Item {
             visible: !Plasmoid.configuration.railVisible
             placesModel: placesSource
             systemModel: powerSource
+            powerMenu: sharedPowerMenu
             onCloseRequested: root.closeMenu()
         }
     }

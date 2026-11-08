@@ -34,6 +34,20 @@ ListView {
     currentIndex: -1
     cacheBuffer: 400
 
+    // 快速定位到某个字母分组
+    function jumpToGroup(group) {
+        if (!model) {
+            return
+        }
+        for (let i = 0; i < count; ++i) {
+            const idx = model.index(i, 0)
+            if (String(idx.data(Qt.UserRole + 2)) === String(group)) {
+                positionViewAtIndex(i, ListView.Beginning)
+                return
+            }
+        }
+    }
+
     function openMenu(parentItem, x, y) {
         menuVisualParent = parentItem
         contextMenu.open(x, y)

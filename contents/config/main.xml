@@ -34,6 +34,12 @@
             <default></default>
         </entry>
         <!-- 逗号分隔的隐藏文件夹显示名，例如 "桌面,视频" -->
+        <entry name="powerMenuWidth" type="Int">
+            <default>150</default>
+        </entry>
+        <entry name="hiddenPowerActions" type="String">
+            <default></default>
+        </entry>
         <entry name="hiddenPlaces" type="String">
             <default></default>
         </entry>

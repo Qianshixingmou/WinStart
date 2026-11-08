@@ -75,7 +75,15 @@ Item {
         return false
     }
 
+    function jumpToCategory(index) {
+        const item = categoryRepeater.itemAt(index)
+        if (item) {
+            flick.contentY = Math.max(0, item.y - 4)
+        }
+    }
+
     Flickable {
+        id: flick
         anchors.fill: parent
         clip: true
         contentWidth: width
@@ -88,6 +96,7 @@ Item {
             spacing: 4
 
             Repeater {
+                id: categoryRepeater
                 model: view.model
 
                 delegate: ColumnLayout {

@@ -15,6 +15,7 @@ Item {
     property var applet: null
     property var placesModel: null
     property var systemModel: null
+    property var powerMenu: null
 
     signal closeRequested()
     signal pinPlaceRequested(string url, string label)
@@ -26,7 +27,16 @@ Item {
         id: kuser
     }
 
+    Metrics {
+        id: metrics
+    }
+
     readonly property var hiddenNames: String(Plasmoid.configuration.hiddenPlaces || "").split(",").filter(s => s.length > 0)
+    readonly property var hiddenPower: String(Plasmoid.configuration.hiddenPowerActions || "").split(",").filter(s => s.length > 0)
+
+    function powerVisible(label) {
+        return hiddenPower.indexOf(String(label ?? "")) < 0
+    }
     // KDE 默认把“视频”标记为隐藏，places 模型里没有它，这里在启用时补一条
     readonly property bool showVideos: hiddenNames.indexOf(i18n("视频")) < 0
     readonly property string videosUrl: "file:///home/" + kuser.loginName + "/Videos"
@@ -89,33 +99,21 @@ Item {
     }
 
     function openPowerMenu() {
-        const p = powerButton.mapToItem(null, 0, 0)
-        const w = powerMenu.implicitWidth
-        const h = powerMenu.implicitHeight
-        // 弹在按钮右侧，避免盖住按钮本身
-        let x = p.x + powerButton.width + Kirigami.Units.smallSpacing
-        if (x + w > Screen.desktopAvailableWidth) {
-            x = Math.max(0, p.x - w - Kirigami.Units.smallSpacing)
+        if (rail.powerMenu) {
+            rail.powerMenu.openRight(powerButton)
         }
-        let y = p.y + powerButton.height - h
-        if (y < 0) {
-            y = 0
-        }
-        powerMenu.x = x
-        powerMenu.y = y
-        powerMenu.open()
     }
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.topMargin: Math.round(Kirigami.Units.gridUnit * 0.7)
-        anchors.bottomMargin: Kirigami.Units.smallSpacing
-        spacing: Kirigami.Units.smallSpacing
+        anchors.topMargin: metrics.railTopMargin
+        anchors.bottomMargin: metrics.railBottomMargin
+        spacing: metrics.itemSpacing
 
         // 用户头像（圆形）
         KirigamiComponents.AvatarButton {
             Layout.alignment: Qt.AlignHCenter
-            implicitWidth: Math.round(Kirigami.Units.gridUnit * 1.9)
+            implicitWidth: metrics.avatarSize
             implicitHeight: implicitWidth
 
             text: i18n("账户设置")
@@ -232,20 +230,4 @@ Item {
         }
     }
 
-    PlasmaComponents3.Menu {
-        id: powerMenu
-
-        Repeater {
-            model: rail.systemModel
-
-            PlasmaComponents3.MenuItem {
-                text: model.display
-                icon.name: model.decoration
-                onTriggered: {
-                    rail.systemModel.trigger(index, "", null)
-                    rail.closeRequested()
-                }
-            }
-        }
-    }
 }

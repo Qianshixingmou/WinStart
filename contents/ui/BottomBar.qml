@@ -3,7 +3,6 @@ import QtQuick.Layouts
 
 import org.kde.plasma.plasmoid
 import org.kde.plasma.components as PlasmaComponents3
-import org.kde.plasma.extras as PlasmaExtras
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.components as KirigamiComponents
 import org.kde.kcmutils as KCM
@@ -15,6 +14,13 @@ RowLayout {
 
     property var placesModel: null
     property var systemModel: null
+    property var powerMenu: null
+
+    readonly property var hiddenPower: String(Plasmoid.configuration.hiddenPowerActions || "").split(",").filter(s => s.length > 0)
+
+    function powerVisible(label) {
+        return hiddenPower.indexOf(String(label ?? "")) < 0
+    }
 
     signal closeRequested()
 
@@ -22,11 +28,15 @@ RowLayout {
         id: kuser
     }
 
-    spacing: Kirigami.Units.smallSpacing
+    Metrics {
+        id: metrics
+    }
+
+    spacing: metrics.itemSpacing
 
     KirigamiComponents.AvatarButton {
-        Layout.leftMargin: Kirigami.Units.smallSpacing
-        implicitWidth: Math.round(Kirigami.Units.gridUnit * 1.6)
+        Layout.leftMargin: metrics.edgeMargin
+        implicitWidth: metrics.avatarSize
         implicitHeight: implicitWidth
 
         text: i18n("账户设置")
@@ -63,33 +73,15 @@ RowLayout {
         id: powerButton
         icon.name: "system-shutdown"
         display: PlasmaComponents3.AbstractButton.IconOnly
-        Layout.rightMargin: Kirigami.Units.smallSpacing
-        onClicked: powerMenu.openRelative()
+        Layout.rightMargin: metrics.edgeMargin
+        onClicked: {
+            if (bar.powerMenu) {
+                bar.powerMenu.openAbove(powerButton)
+            }
+        }
         PlasmaComponents3.ToolTip.text: i18n("电源")
         PlasmaComponents3.ToolTip.visible: hovered
         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
     }
 
-    // 用 KDE 自己的 PlasmaExtras.Menu：相对按钮向上弹，自动避开按钮和窗口边缘
-    PlasmaExtras.Menu {
-        id: powerMenu
-        visualParent: powerButton
-        placement: PlasmaExtras.Menu.TopPosedRightAlignedPopup
-    }
-
-    Instantiator {
-        model: bar.systemModel
-
-        delegate: PlasmaExtras.MenuItem {
-            text: model.display
-            icon: model.decoration
-            onClicked: {
-                bar.systemModel.trigger(index, "", null)
-                bar.closeRequested()
-            }
-        }
-
-        onObjectAdded: (index, object) => powerMenu.addMenuItem(object)
-        onObjectRemoved: (index, object) => powerMenu.removeMenuItem(object)
-    }
 }
